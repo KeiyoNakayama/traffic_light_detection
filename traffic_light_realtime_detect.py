@@ -74,7 +74,7 @@ MODEL_ID = "keiyos-workspace/traffic-light-detection2-ccd7n-7-yolo26n-t1"  # 例
 
 def load_detection_model():
   if args.prepare_model and not API_KEY:
-    raise RuntimeError("モデル準備には ROBOFLOW_API_KEY 環境変数が必要です。")
+    raise RuntimeError("モデル準備前に環境変数 ROBOFLOW_API_KEY にRoboflow APIキーを設定してください。")
   loaded = get_model(
       model_id=MODEL_ID, api_key=API_KEY,
       device=torch.device("cuda:0" if args.device == "cuda" else "cpu"),

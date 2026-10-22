@@ -25,9 +25,27 @@ cd /path/to/traffic_light_detection
 処理が2秒を超えた場合は送信回数を減らし、古い画像をためません。
 終了は両方のターミナルで Ctrl+C。
 
+## CPU専用スクリプト
+
+GPUを使わずCPUだけで動かす場合は、専用スクリプトを起動します。モデルキャッシュは通常版と同じ `model_cache/` を使います。
+
+```bash
+cd /path/to/traffic_light_detection
+.venv/bin/python traffic_light_cpu.py
+```
+
+初回のモデル準備には、通信できる状態で環境変数 `ROBOFLOW_API_KEY` を設定してから次を実行してください。APIキーをソースコードへ書き込む必要はありません。
+
+```bash
+.venv/bin/python traffic_light_cpu.py --prepare-model
+```
+
+準備後はネット接続なしでCPU推論できます。準備結果を確認する場合は `--check-model` を付けます。CPU推論スレッド数は `--threads 4` のように指定できます。
+
 ## 初回準備・モデルを削除した場合
 
 通信できる状態で一度だけ実行します。カメラは不要です。
+実行前にRoboflow APIキーを環境変数に設定してください。キーの入力内容は画面に表示されず、ソースコードにも保存されません。
 
 ```bash
 cd /path/to/traffic_light_detection
@@ -47,7 +65,7 @@ cd /path/to/traffic_light_detection
 .venv/bin/python traffic_light_realtime_detect.py --check-model
 ```
 
-モデルの初回準備には `ROBOFLOW_API_KEY` 環境変数が必要です。キーをソースコードやGitに保存しないでください。準備後のオフライン起動と検証にはキーは不要です。
+準備後のオフライン起動と検証にはAPIキーは不要です。
 
 通常起動と検証は `OFFLINE_MODE=True`、準備だけ `OFFLINE_MODE_WARM_UP=True` で実行します。
 モデルが不足していても、通常起動から自動的にオンラインへ切り替えません。

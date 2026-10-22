@@ -17,13 +17,21 @@ python traffic_light_realtime_detect.py
 python camera_image_sender.py --camera 2 --interval 2
 ```
 
-初回はRoboflow APIキーを環境変数に設定してモデルを準備してください。APIキーはソースコードやGitに保存しないでください。
+CPUだけで推論する場合は、専用スクリプトを使います。GPUは使用しません。
+
+```bash
+python traffic_light_cpu.py
+```
+
+モデルの初回準備にはRoboflow APIキーが必要です。次のコマンドでキーを入力して環境変数に設定します（入力内容は画面に表示されません）。
 
 ```bash
 read -rsp "Roboflow API key: " ROBOFLOW_API_KEY; echo
 export ROBOFLOW_API_KEY
 python traffic_light_realtime_detect.py --prepare-model
 ```
+
+CPU版でも同じ環境変数を設定して `traffic_light_cpu.py --prepare-model` を実行します。通常起動や準備済みモデルの検証ではAPIキーは不要です。APIキーをソースコードやGitに保存しないでください。
 
 モデルの準備後はオフラインで起動できます。GPUが使えない環境では `--device cpu` を指定してください。
 
