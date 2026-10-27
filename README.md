@@ -42,3 +42,28 @@ CPU版でも同じ環境変数を設定して `traffic_light_cpu.py --prepare-mo
 モデルキャッシュは `model_cache/` に保存されます。サイズが大きく環境固有のため、Gitには含めません。モデルは各環境で `--prepare-model` を実行して取得してください。
 
 `requirements.gpu-tested.txt` はGPU動作確認環境の依存パッケージ一覧です。GPU/CUDAやOSの構成に合わせて環境を用意してください。
+
+## ブラウザなしで表示
+
+デスクトップ上のターミナルから、OpenCVウィンドウ表示を指定します。
+
+```bash
+cd ~/traffic_light_detection
+.venv/bin/python traffic_light_realtime_detect.py --display window
+```
+
+CPU版の場合は `.venv/bin/python traffic_light_cpu.py --display window` を使います。
+別のターミナルからカメラ画像を送信します（既に送信中なら追加起動は不要）。
+
+```bash
+cd ~/traffic_light_detection
+.venv/bin/python camera_image_sender.py --camera 2 --interval 0.05
+```
+
+`--interval` は秒単位で、0.05は最大20回/秒の送信指定です。実際の速度は推論時間などに依存します。
+画像が届くまでウィンドウには待機メッセージが出ます。
+検出枠・ラベル・FPSを表示し、ウィンドウにフォーカスを当てて Q / Esc、
+閉じるボタン、またはターミナルの Ctrl+C で推論サーバーを終了できます。
+送信プログラムは別途 Ctrl+C で停止してください。
+モデル準備済みならネット接続は不要です。GUI対応OpenCVとデスクトップ表示環境が必要です。
+`--display` を省略すると従来のブラウザ表示になります。

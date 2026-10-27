@@ -16,6 +16,7 @@ parser.add_argument("--prepare-model", action="store_true", help="通信して�
 parser.add_argument("--check-model", action="store_true", help="カメラを使わずオフライン読込・推論を検証する")
 parser.add_argument("--threads", type=int, default=2, help="CPU推論スレッド数（既定: 2）")
 parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda", help="推論デバイス（既定: cuda）")
+parser.add_argument("--display", choices=["browser", "window"], default="browser", help="結果の表示方法（window: OpenCVで直接表示）")
 args = parser.parse_args()
 if args.threads < 1:
   parser.error("--threads は1以上を指定してください")
@@ -117,6 +118,14 @@ if args.prepare_model or args.check_model:
   sys.exit(0)
 
 # バウンディングボックスを描画するためのアノテーターを初期化
+window_preview = None
+if args.display == "window":
+  from window_preview import WindowPreview
+  try:
+    window_preview = WindowPreview()
+  except (RuntimeError, cv2.error) as error:
+    sys.exit(str(error))
+
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 frame_count = 0
@@ -272,6 +281,9 @@ def my_custom_sink(predictions, image):
     print("画像を受信し、推論を開始しました。")
 
   # OpenCVのGUIを使わず、ブラウザ表示用のJPEGを更新する。
+  if window_preview is not None:
+    window_preview.publish(annotated_image)
+
   success, encoded_image = cv2.imencode(".jpg", annotated_image, [cv2.IMWRITE_JPEG_QUALITY, 80])
   if success:
     global latest_jpeg, latest_sequence
@@ -297,12 +309,21 @@ signal.signal(signal.SIGINT, stop_server)
 signal.signal(signal.SIGTERM, stop_server)
 try:
   print("画像受付: http://127.0.0.1:8765/infer", flush=True)
-  print("結果表示: http://127.0.0.1:8765 （終了: Ctrl+C）", flush=True)
+  if window_preview is not None:
+    print("結果表示: OpenCVウィンドウ（終了: Q / Esc / ウィンドウを閉じる / Ctrl+C）", flush=True)
+  else:
+    print("結果表示: http://127.0.0.1:8765 （終了: Ctrl+C）", flush=True)
   while True:
-    time.sleep(0.2)
+    if window_preview is not None:
+      if not window_preview.tick():
+        break
+    else:
+      time.sleep(0.2)
 except KeyboardInterrupt:
   pass
 finally:
   preview_server.shutdown()
   preview_server.server_close()
+  if window_preview is not None:
+    window_preview.close()
   print("画像推論を終了しました。")
