@@ -17,11 +17,26 @@ parser.add_argument("--check-model", action="store_true", help="カメラを使�
 parser.add_argument("--threads", type=int, default=2, help="CPU推論スレッド数（既定: 2）")
 parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda", help="推論デバイス（既定: cuda）")
 parser.add_argument("--display", choices=["browser", "window"], default="browser", help="結果の表示方法（window: OpenCVで直接表示）")
+parser.add_argument("--ros-go", action="store_true", help="信号待ち中のgreen検出をROS 2ゴーサインとして送信する")
+parser.add_argument("--robot-id", default="orne_box", help="ゴーサイン送信先のrobot_id")
+parser.add_argument("--go-class", default="Trafficlight_green", help="ゴーサイン判定に使う完全一致クラス名")
+parser.add_argument("--go-min-confidence", type=float, default=0.8, help="ゴーサイン判定の最小信頼度")
+parser.add_argument("--go-confirm-frames", type=int, default=3, help="連続して検出が必要な画像数")
+parser.add_argument("--heartbeat-topic", default="/traffic_signal/heartbeat", help="PC heartbeatトピック")
+parser.add_argument("--waiting-topic", default="/traffic_signal/waiting", help="ロボット待機トピック")
+parser.add_argument("--go-topic", default="/traffic_signal/go", help="ゴーサイントピック")
+parser.add_argument("--ack-topic", default="/traffic_signal/ack", help="ロボット応答トピック")
 args = parser.parse_args()
 if args.threads < 1:
   parser.error("--threads は1以上を指定してください")
 if args.prepare_model and args.check_model:
   parser.error("--prepare-model と --check-model は同時に指定できません")
+if not 0.0 <= args.go_min_confidence <= 1.0:
+  parser.error("--go-min-confidence は0から1の範囲で指定してください")
+if args.go_confirm_frames < 1:
+  parser.error("--go-confirm-frames は1以上を指定してください")
+if args.ros_go and (args.prepare_model or args.check_model):
+  parser.error("--ros-go はモデル準備・検証モードでは使用できません")
 MODEL_CACHE = Path(__file__).resolve().parent / "model_cache"
 os.environ["MODEL_CACHE_DIR"] = str(MODEL_CACHE)
 os.environ["INFERENCE_HOME"] = str(MODEL_CACHE)
@@ -136,6 +151,7 @@ fps_frames = 0
 processing_fps = 0.0
 frame_condition = Condition()
 inference_lock = Lock()
+signal_go_bridge = None
 
 
 class PreviewHandler(BaseHTTPRequestHandler):
@@ -240,6 +256,9 @@ def start_preview_server():
 # フレームごとに呼ばれる推論結果の処理関数
 def my_custom_sink(predictions, image):
   global frame_count, fps_started, fps_frames, processing_fps
+  if signal_go_bridge is not None:
+    signal_go_bridge.process_predictions(predictions)
+
   now = time.perf_counter()
   if fps_started is None:
     fps_started = now
@@ -265,15 +284,42 @@ def my_custom_sink(predictions, image):
       scene=annotated_image, detections=detections, labels=labels
   )
 
-  # 枠が出ないフレームでも、推論が動いていることを画面上で確認できるようにする。
-  status = f"{args.device.upper()} | FPS: {processing_fps:.1f} | Frame: {frame_count} | Detections: {len(detections)}"
+  # 枠が出ないフレームでも、推論とゴーサイン連携の状態を画面で確認できる。
+  status = (
+      f"{args.device.upper()} | FPS: {processing_fps:.1f} | "
+      f"Frame: {frame_count} | Detections: {len(detections)}"
+  )
+  go_status = (
+      signal_go_bridge.status_text()
+      if signal_go_bridge is not None
+      else "GO: disabled"
+  )
+  overlay = annotated_image.copy()
+  cv2.rectangle(
+      overlay,
+      (0, 0),
+      (annotated_image.shape[1], min(66, annotated_image.shape[0])),
+      (0, 0, 0),
+      cv2.FILLED,
+  )
+  cv2.addWeighted(overlay, 0.65, annotated_image, 0.35, 0, annotated_image)
   cv2.putText(
       annotated_image,
       status,
-      (10, 30),
+      (10, min(25, annotated_image.shape[0] - 1)),
       cv2.FONT_HERSHEY_SIMPLEX,
-      0.8,
-      (0, 255, 0),
+      0.65,
+      (255, 255, 255),
+      2,
+      cv2.LINE_AA,
+  )
+  cv2.putText(
+      annotated_image,
+      go_status,
+      (10, min(55, annotated_image.shape[0] - 1)),
+      cv2.FONT_HERSHEY_SIMPLEX,
+      0.65,
+      (0, 255, 255) if signal_go_bridge is not None else (180, 180, 180),
       2,
       cv2.LINE_AA,
   )
@@ -298,6 +344,19 @@ print("保存済みモデルをオフラインで初期化しています。", f
 model = load_detection_model()
 print("試し推論でGPUの準備をしています。", flush=True)
 model.infer(np.zeros((640, 640, 3), dtype=np.uint8))
+if args.ros_go:
+  from ros_signal_go_bridge import SignalGoBridge
+
+  signal_go_bridge = SignalGoBridge(
+      robot_id=args.robot_id,
+      go_class=args.go_class,
+      min_confidence=args.go_min_confidence,
+      confirm_frames=args.go_confirm_frames,
+      heartbeat_topic=args.heartbeat_topic,
+      waiting_topic=args.waiting_topic,
+      go_topic=args.go_topic,
+      ack_topic=args.ack_topic,
+  )
 preview_server = start_preview_server()
 
 
@@ -324,6 +383,8 @@ except KeyboardInterrupt:
 finally:
   preview_server.shutdown()
   preview_server.server_close()
+  if signal_go_bridge is not None:
+    signal_go_bridge.close()
   if window_preview is not None:
     window_preview.close()
   print("画像推論を終了しました。")
