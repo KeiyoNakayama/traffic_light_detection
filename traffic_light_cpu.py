@@ -15,7 +15,10 @@ parser.add_argument("--prepare-model", action="store_true", help="通信して�
 parser.add_argument("--check-model", action="store_true", help="カメラを使わずオフライン読込・推論を検証する")
 parser.add_argument("--threads", type=int, default=2, help="CPU推論スレッド数（既定: 2）")
 parser.add_argument("--display", choices=["browser", "window"], default="browser", help="結果の表示方法（window: OpenCVで直接表示）")
+from ros_service_control import add_arguments, validate_arguments
+add_arguments(parser)
 args = parser.parse_args()
+validate_arguments(parser, args)
 if args.threads < 1:
   parser.error("--threads は1以上を指定してください")
 if args.prepare_model and args.check_model:
@@ -117,12 +120,17 @@ fps_frames = 0
 processing_fps = 0.0
 frame_condition = Condition()
 inference_lock = Lock()
+service_control = None
 
 
 class PreviewHandler(BaseHTTPRequestHandler):
   def do_POST(self):
     if self.path != "/infer":
       self.send_error(404)
+      return
+    frame_token = service_control.begin_frame() if service_control is not None else None
+    if service_control is not None and frame_token is None:
+      self.send_error(409, "Recognition inactive; waiting for SetBool start")
       return
     try:
       length = int(self.headers.get("Content-Length", "0"))
@@ -151,6 +159,8 @@ class PreviewHandler(BaseHTTPRequestHandler):
     try:
       result = model.infer(image)[0]
       predictions = result.model_dump(by_alias=True, mode="json", exclude_none=True)
+      if service_control is not None:
+        service_control.observe(frame_token, predictions)
       my_custom_sink(predictions, image)
       body = json.dumps(predictions).encode("utf-8")
     except Exception as error:
@@ -242,6 +252,8 @@ def my_custom_sink(predictions, image):
   )
 
   status = f"CPU | FPS: {processing_fps:.1f} | Frame: {frame_count} | Detections: {len(detections)}"
+  if service_control is not None:
+    status += " | " + service_control.status_text()
   cv2.putText(
       annotated_image,
       status,
@@ -273,6 +285,9 @@ print("保存済みモデルをオフラインで初期化しています。", f
 model = load_detection_model()
 print("試し推論でCPUの準備をしています。", flush=True)
 model.infer(np.zeros((640, 640, 3), dtype=np.uint8))
+if args.ros_services:
+  from ros_service_control import ServiceControl
+  service_control = ServiceControl(args)
 preview_server = start_preview_server()
 
 
@@ -299,6 +314,8 @@ except KeyboardInterrupt:
 finally:
   preview_server.shutdown()
   preview_server.server_close()
+  if service_control is not None:
+    service_control.close()
   if window_preview is not None:
     window_preview.close()
   print("画像推論を終了しました。")

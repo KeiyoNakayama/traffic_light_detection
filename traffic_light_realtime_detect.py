@@ -26,7 +26,10 @@ parser.add_argument("--heartbeat-topic", default="/traffic_signal/heartbeat", he
 parser.add_argument("--waiting-topic", default="/traffic_signal/waiting", help="ロボット待機トピック")
 parser.add_argument("--go-topic", default="/traffic_signal/go", help="ゴーサイントピック")
 parser.add_argument("--ack-topic", default="/traffic_signal/ack", help="ロボット応答トピック")
+from ros_service_control import add_arguments, validate_arguments
+add_arguments(parser)
 args = parser.parse_args()
+validate_arguments(parser, args)
 if args.threads < 1:
   parser.error("--threads は1以上を指定してください")
 if args.prepare_model and args.check_model:
@@ -151,6 +154,7 @@ fps_frames = 0
 processing_fps = 0.0
 frame_condition = Condition()
 inference_lock = Lock()
+service_control = None
 signal_go_bridge = None
 
 
@@ -158,6 +162,10 @@ class PreviewHandler(BaseHTTPRequestHandler):
   def do_POST(self):
     if self.path != "/infer":
       self.send_error(404)
+      return
+    frame_token = service_control.begin_frame() if service_control is not None else None
+    if service_control is not None and frame_token is None:
+      self.send_error(409, "Recognition inactive; waiting for SetBool start")
       return
     try:
       length = int(self.headers.get("Content-Length", "0"))
@@ -187,6 +195,8 @@ class PreviewHandler(BaseHTTPRequestHandler):
       result = model.infer(image)[0]
       # 未使用の tracker_id=None を描画側へ渡すと整数変換で失敗する。
       predictions = result.model_dump(by_alias=True, mode="json", exclude_none=True)
+      if service_control is not None:
+        service_control.observe(frame_token, predictions)
       my_custom_sink(predictions, image)
       body = json.dumps(predictions).encode("utf-8")
     except Exception as error:
@@ -303,6 +313,8 @@ def my_custom_sink(predictions, image):
       cv2.FILLED,
   )
   cv2.addWeighted(overlay, 0.65, annotated_image, 0.35, 0, annotated_image)
+  if service_control is not None:
+    status += " | " + service_control.status_text()
   cv2.putText(
       annotated_image,
       status,
@@ -357,6 +369,9 @@ if args.ros_go:
       go_topic=args.go_topic,
       ack_topic=args.ack_topic,
   )
+if args.ros_services:
+  from ros_service_control import ServiceControl
+  service_control = ServiceControl(args)
 preview_server = start_preview_server()
 
 
@@ -383,6 +398,8 @@ except KeyboardInterrupt:
 finally:
   preview_server.shutdown()
   preview_server.server_close()
+  if service_control is not None:
+    service_control.close()
   if signal_go_bridge is not None:
     signal_go_bridge.close()
   if window_preview is not None:

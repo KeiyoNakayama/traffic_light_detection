@@ -110,3 +110,89 @@ cd ~/traffic_light_detection
 送信プログラムは別途 Ctrl+C で停止してください。
 モデル準備済みならネット接続は不要です。GUI対応OpenCVとデスクトップ表示環境が必要です。
 `--display` を省略すると従来のブラウザ表示になります。
+
+## 到着時サービスによる認識開始・停止（サービス連携版）
+
+`--ros-services` は既存のトピック方式 `--ros-go` とは別モードです。
+認識プロセスとカメラ送信プログラムをあらかじめ起動します。
+モデル読込後は待機し、`std_srvs/srv/SetBool` の `data: true` で画像推論を開始、
+`false` で停止します。プロセスは停止せず次の開始要求を待ちます。
+停止中の画像送信にはHTTP 409を返すため、送信側のログにその旨が出ます。
+実行中の1フレームの推論は中断しませんが、その結果からゴーサインは出しません。
+
+GPU版・CPU版のどちらにも以下のオプションを指定できます。
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+cd ~/ros2_ws/src/traffic_light_detection
+# add_service 派生版の専用サービスへ接続。
+.venv/bin/python traffic_light_realtime_detect.py --display window \
+  --ros-services \
+  --control-service /mission/control_traffic_light \
+  --go-service /waypoint_sender_node/signal_go \
+  --service-go-class Trafficlight_blue \
+  --service-go-confidence 0.8 \
+  --service-go-frames 3
+```
+
+`Trafficlight_blue` が通行対象の信号に対応することを実画像で確認してください。
+クラスは完全一致です。現状は画像中のすべての検出を対象とし、車線や信号機の選別はしません。
+CPU版はスクリプト名を `traffic_light_cpu.py` に置き換えます。
+カメラ送信は別ターミナルで `.venv/bin/python camera_image_sender.py --camera 2 --interval 0.1`。
+
+手動で開始・停止を確認する場合:
+
+```bash
+ros2 service call /mission/control_traffic_light std_srvs/srv/SetBool '{data: true}'
+ros2 service call /mission/control_traffic_light std_srvs/srv/SetBool '{data: false}'
+```
+
+青の連続確認後、指定先に `std_srvs/srv/Trigger` を一度だけ送信し認識を停止します。
+連続判定は1秒を超える画像間隔、1秒を超える推論、対象未検出、信頼度以上のredクラス検出でリセットします。
+再度の到着では `data: true` で再開します。動作中の重複開始は連続判定をリセットしません。
+ゴーサイン応答待ちの再開始は拒否します。5秒以上応答がなければ応答不明とし、
+二重進行を防ぐため自動再送しません。停止要求で送信済みゴーサインは取り消せません。
+受信側も「信号待ち中のWaypointだけを再開する」検証が必要です。
+
+画像の到着時サービス対応版で使うYAML設定例（座標は現場に合わせる）:
+
+```yaml
+arrival_services:
+  traffic_light: /mission/control_traffic_light
+waypoints:
+  - {x: 1.0, y: 0.0, yaw: 0.0, on_arrival_task: traffic_light, on_arrival_action: start}
+```
+
+接続先は `~/waypoint_service_ws/src/waypoint_tools` の `add_service` 派生版です。
+専用の `/waypoint_sender_node/signal_go` (`Trigger`) を追加しました。
+`traffic_light` タスクの `start` 到着で停止中の場合だけ進行を受け付けます。
+通常の `next_wp` と異なり、走行中・未開始・別タスク・編集停止では進行しません。
+到着時の開始サービス応答より先にゴーサインが届いた場合は、開始成功後に進行します。
+既存の `~/ros2_ws/src/waypoint_tools` は変更せず、別ワークスペースに配置しています。
+
+Nav2起動後、以下で認識・カメラ送信・Waypoint送信ノードをまとめて待機起動します。
+`send_waypoint_path` は現場の座標に変更したYAMLの絶対パスを指定してください。
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+source ~/waypoint_service_ws/install/setup.bash
+ros2 launch waypoint_tools traffic_signal.launch.py \
+  send_waypoint_path:=/absolute/path/to/your_waypoints.yaml \
+  device:=cuda display:=window camera:=2 go_class:=Trafficlight_blue
+```
+
+CPUは `device:=cpu`。認識サーバーの「待機」表示を確認後、RVizのStartで走行開始します。
+同じ名前の旧Waypointノード・既存の認識サーバー・カメラ送信は同時起動しないでください。
+サンプルは `~/waypoint_service_ws/src/waypoint_tools/config/waypoints/traffic_signal_example.yaml`。
+信号待ち点には `on_arrival_task: traffic_light` と `on_arrival_action: start` を指定します。
+最後のWaypointにはせず、その後に横断後のWaypointを置いてください。
+通常の認識ノードは常駐し、サービスで推論を有効化・無効化する方式です。
+
+模擬ROSサービスでの検証（走行サービスを使いません）:
+
+```bash
+source /opt/ros/humble/setup.bash
+ROS_DOMAIN_ID=179 ROS_LOCALHOST_ONLY=1 python3 tests/test_service_control.py
+```
