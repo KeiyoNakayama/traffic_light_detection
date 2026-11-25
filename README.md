@@ -126,11 +126,11 @@ GPU版・CPU版のどちらにも以下のオプションを指定できます�
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
 cd ~/ros2_ws/src/traffic_light_detection
-# add_service 派生版の専用サービスへ接続。
+# add_service の既存Next WPサービスへ接続。
 .venv/bin/python traffic_light_realtime_detect.py --display window \
   --ros-services \
   --control-service /mission/control_traffic_light \
-  --go-service /waypoint_sender_node/signal_go \
+  --go-service /waypoint_sender_node/next_wp \
   --service-go-class Trafficlight_blue \
   --service-go-confidence 0.8 \
   --service-go-frames 3
@@ -164,27 +164,35 @@ waypoints:
   - {x: 1.0, y: 0.0, yaw: 0.0, on_arrival_task: traffic_light, on_arrival_action: start}
 ```
 
-接続先は `~/waypoint_service_ws/src/waypoint_tools` の `add_service` 派生版です。
-専用の `/waypoint_sender_node/signal_go` (`Trigger`) を追加しました。
-`traffic_light` タスクの `start` 到着で停止中の場合だけ進行を受け付けます。
-通常の `next_wp` と異なり、走行中・未開始・別タスク・編集停止では進行しません。
-到着時の開始サービス応答より先にゴーサインが届いた場合は、開始成功後に進行します。
-既存の `~/ros2_ws/src/waypoint_tools` は変更せず、別ワークスペースに配置しています。
+`waypoint_tools` は先輩の `add_service` のC++・launchをそのまま使用します。
+変更はYAMLの `arrival_services` と、認識を開始するWaypointの指定だけです。
+信号認識側から既存の `/waypoint_sender_node/next_wp` (`Trigger`) を呼びます。
+このサービス自体は信号待ち専用ではなく、手動で呼ぶと走行中でも次の点へ進みます。
+認識側が開始サービス受信後だけ判定し、一度だけ進行要求を送るよう管理しています。
+認識中にRVizのNext WPやStartで別の走行操作をする場合は、先に認識停止を呼んでください。
 
-Nav2起動後、以下で認識・カメラ送信・Waypoint送信ノードをまとめて待機起動します。
-`send_waypoint_path` は現場の座標に変更したYAMLの絶対パスを指定してください。
+Nav2起動後、認識・カメラ送信を次のコマンドで待機起動します。
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash
+cd ~/ros2_ws/src/traffic_light_detection
+ros2 launch ./launch/traffic_signal.launch.py device:=cuda display:=window camera:=2
+```
+
+CPUは `device:=cpu`。認識側launchはWaypointノードやNav2を起動しません。
+認識サーバーの「待機」表示を確認後、別ターミナルでWaypoint送信側を起動します。
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
 source ~/waypoint_service_ws/install/setup.bash
-ros2 launch waypoint_tools traffic_signal.launch.py \
-  send_waypoint_path:=/absolute/path/to/your_waypoints.yaml \
-  device:=cuda display:=window camera:=2 go_class:=Trafficlight_blue
+ros2 launch waypoint_tools send.launch.py \
+  send_waypoint_path:=/absolute/path/to/your_waypoints.yaml
 ```
 
-CPUは `device:=cpu`。認識サーバーの「待機」表示を確認後、RVizのStartで走行開始します。
-同じ名前の旧Waypointノード・既存の認識サーバー・カメラ送信は同時起動しないでください。
+RVizのStartで走行開始します。同名の旧Waypointノード・認識サーバー・カメラ送信は
+同時起動しないでください。
 サンプルは `~/waypoint_service_ws/src/waypoint_tools/config/waypoints/traffic_signal_example.yaml`。
 信号待ち点には `on_arrival_task: traffic_light` と `on_arrival_action: start` を指定します。
 最後のWaypointにはせず、その後に横断後のWaypointを置いてください。

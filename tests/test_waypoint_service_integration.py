@@ -39,7 +39,7 @@ class IntegrationTest(unittest.TestCase):
         bridge = ServiceControl(SimpleNamespace(
             service_go_class='Trafficlight_blue', service_go_confidence=.8,
             service_go_frames=3, control_service='/mission/control_traffic_light',
-            go_service='/waypoint_sender_node/signal_go'))
+            go_service='/waypoint_sender_node/next_wp'))
         log = open('/tmp/waypoint_signal_integration.log', 'w')
         process = subprocess.Popen([
             str(ROOT / 'install/waypoint_tools/lib/waypoint_tools/waypoint_sender_node'),
@@ -62,7 +62,8 @@ class IntegrationTest(unittest.TestCase):
             peer.destroy_client(client)
             return result
         try:
-            self.assertFalse(call('/waypoint_sender_node/signal_go').success)
+            self.assertIsNone(bridge.begin_frame())
+            self.assertEqual(goals, [])
             self.assertTrue(call('/waypoint_sender_node/send_all').success)
             wait_for(lambda: bridge.begin_frame() is not None)
             # Wait for the sender to consume the SetBool response and enter stopped state.
@@ -74,7 +75,8 @@ class IntegrationTest(unittest.TestCase):
             wait_for(lambda: bridge.status_text() == 'GO ACCEPTED')
             wait_for(lambda: len(goals) == 2)
             self.assertEqual(goals, [1.0, 3.0])
-            self.assertFalse(call('/waypoint_sender_node/signal_go').success)
+            self.assertIsNone(bridge.begin_frame())
+            time.sleep(.2)
             self.assertEqual(len(goals), 2)
         finally:
             process.terminate()
