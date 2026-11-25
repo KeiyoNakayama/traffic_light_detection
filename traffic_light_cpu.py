@@ -45,12 +45,25 @@ os.environ["ONNXRUNTIME_EXECUTION_PROVIDERS"] = "CPUExecutionProvider"
 os.environ["OMP_NUM_THREADS"] = str(args.threads)
 os.environ["MKL_NUM_THREADS"] = str(args.threads)
 
+print("推論ライブラリを読み込んでいます。初期化が終わるまでお待ちください。", flush=True)
 import cv2
+
+# Qtウィンドウは推論ライブラリの読込前にメインスレッドで作成する。
+window_preview = None
+if args.display == "window" and not (args.prepare_model or args.check_model):
+  from window_preview import WindowPreview
+  try:
+    window_preview = WindowPreview()
+  except (RuntimeError, cv2.error) as error:
+    sys.exit(str(error))
+
+
 import numpy as np
 import onnxruntime as ort
 import supervision as sv
 import torch
 from inference import get_model
+print("推論ライブラリの読み込みが完了しました。", flush=True)
 
 torch.set_num_threads(args.threads)
 cv2.setNumThreads(1)
@@ -101,14 +114,6 @@ if args.prepare_model or args.check_model:
   else:
     print("オフラインでのモデル読込・CPU推論に成功しました。")
   sys.exit(0)
-
-window_preview = None
-if args.display == "window":
-  from window_preview import WindowPreview
-  try:
-    window_preview = WindowPreview()
-  except (RuntimeError, cv2.error) as error:
-    sys.exit(str(error))
 
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()

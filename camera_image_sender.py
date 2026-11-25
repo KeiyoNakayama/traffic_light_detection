@@ -46,6 +46,15 @@ def main():
     client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     next_send = time.monotonic()
     last_sequence = 0
+    last_status = None
+    last_status_at = 0.0
+
+    def report(status, message):
+        nonlocal last_status, last_status_at
+        now = time.monotonic()
+        if status != last_status or now - last_status_at >= 5:
+            print(message, flush=True)
+            last_status, last_status_at = status, now
     try:
         print(f'カメラ {args.camera}: {args.interval}秒ごとに最新画像を送信（終了: Ctrl+C）', flush=True)
         while True:
@@ -68,9 +77,20 @@ def main():
             try:
                 with client.open(request, timeout=30) as response:
                     response.read()
-                print('画像を送信し、推論が完了しました。', flush=True)
-            except (urllib.error.URLError, TimeoutError, OSError) as error:
-                print(f'送信失敗（推論側の起動を確認してください）: {error}', flush=True)
+                report('running', '画像送信・推論中です。')
+            except urllib.error.HTTPError as error:
+                if error.code == 409:
+                    report('inactive', '認識サーバー接続済み：Waypointからの認識開始サービス待ちです。')
+                else:
+                    report(('http', error.code), f'推論サーバー応答エラー: HTTP {error.code}')
+                error.close()
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, ConnectionRefusedError):
+                    report('connecting', '認識サーバーへの接続待ちです。初期化中の可能性があります。推論側のログを確認してください。')
+                else:
+                    report('connection_error', f'送信失敗: {error}')
+            except (TimeoutError, OSError) as error:
+                report('connection_error', f'送信失敗: {error}')
             next_send += args.interval
             # 遅れた分を連続送信せず、過去の画像もためない。
             now = time.monotonic()

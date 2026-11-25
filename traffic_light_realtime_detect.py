@@ -69,7 +69,19 @@ os.environ["ONNXRUNTIME_EXECUTION_PROVIDERS"] = (
 os.environ["OMP_NUM_THREADS"] = str(args.threads)
 os.environ["MKL_NUM_THREADS"] = str(args.threads)
 
+print("推論ライブラリを読み込んでいます。初期化が終わるまでお待ちください。", flush=True)
 import cv2
+
+# Qtウィンドウは推論ライブラリの読込前にメインスレッドで作成する。
+window_preview = None
+if args.display == "window" and not (args.prepare_model or args.check_model):
+  from window_preview import WindowPreview
+  try:
+    window_preview = WindowPreview()
+  except (RuntimeError, cv2.error) as error:
+    sys.exit(str(error))
+
+
 import torch
 
 torch.set_num_threads(args.threads)
@@ -85,6 +97,7 @@ if args.device == "cuda":
 cv2.setNumThreads(1)
 import supervision as sv
 from inference import get_model
+print("推論ライブラリの読み込みが完了しました。", flush=True)
 import numpy as np
 
 # 設定
@@ -136,14 +149,6 @@ if args.prepare_model or args.check_model:
   sys.exit(0)
 
 # バウンディングボックスを描画するためのアノテーターを初期化
-window_preview = None
-if args.display == "window":
-  from window_preview import WindowPreview
-  try:
-    window_preview = WindowPreview()
-  except (RuntimeError, cv2.error) as error:
-    sys.exit(str(error))
-
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 frame_count = 0
